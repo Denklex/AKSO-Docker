@@ -1,0 +1,110 @@
+
+services:
+
+  # NGINX API GATEWAY
+  api-gateway:
+    image: nginx:alpine #varian nginx (stable, debian, slim, dll)
+    platform: linux/amd64 #arsitektur
+    container_name: api-gateway
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro #read only dari default.conf, sudah dibawah http&events, jik nginx.conf akan root
+    depends_on: #layanan harus siap sebelum gateway hidup
+      - auth-service
+      - acad-service
+    ports: #pemetaan port komputer ke port 80 kontainer
+      - "8081:80"
+    networks: #komunikasinya internal
+      - microservices-network
+    restart: unless-stopped #pengulangan kecuali dihentikan paksa
+
+  # AUTH SERVICE (NODE JS)
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    environment:
+      NODE_ENV: development #menjalankan Node.js
+      PORT: 3001 #port temoat jalannya auth-service
+      MONGO_URI: mongodb://auth-db:27017/auth #membuat DNS internal (port)
+      JWT_SECRET: "f7c29e8a4b0d1e6c3a5f9b2d8c0a1e4" #token Json,31 × 4 = 124 bit
+    depends_on: #auth database harus siap
+      - auth-db
+    networks:
+      - microservices-network
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./auth-service:/app #memasang auth ke node.js
+      - /app/node_modules #menyesuaikan OS node.js
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: #mengatur limit oenggnaan
+          cpus: "0.50" #50% dri CPU
+          memory: 512M #batas ram
+
+  # MONGO DB (AUTH)
+  auth-db:
+    image: mongo:6.0
+    container_name: auth-db
+    volumes:
+      - auth-data:/data/db #storage presisten pada docker
+    networks:
+      - microservices-network
+    ports:
+      - "27017:27017"
+    restart: always
+
+  # ACADEMIC SERVICE (FASTAPI)
+  acad-service: #tambahan
+    build: ./acad-service
+    container_name: acad-service
+    environment:
+      DB_HOST: acad-db #postgresSQL
+      DB_PORT: 5432
+      DB_NAME: products
+      DB_USER: productuser #login
+      DB_PASSWORD: productpass #pw
+    depends_on:
+      - acad-db
+    networks:
+      - microservices-network
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+
+  # POSTGRES 
+  acad-db:
+    image: postgres:12
+    container_name: acad-db
+    environment:
+      POSTGRES_DB: products #db nama
+      POSTGRES_USER: productuser
+      POSTGRES_PASSWORD: productpass
+    volumes:
+      - product-data:/var/lib/postgresql/data #presistent storage
+      - ./acad-service/db_kelas.sql:/docker-entrypoint-initdb.d/db_kelas.sql #load sql lokal
+    networks:
+      - microservices-network
+    ports:
+      - "55432:5432"
+    restart: always #db selalu hidup
+
+networks:
+  microservices-network:
+    driver: bridge
+    ipam: #IP addres Management
+      config:
+        - subnet: 172.16.0.0/28 #pvt n sbnt
+
+
+volumes: #per DB an
+  auth-data: #mendefinisikan auth
+  product-data: #acad
+
+
+#docker exec -it auth-db mongosh
+
+#show dbs                            
+#use auth                              
+#show collections                 
+#db.users.find()            
